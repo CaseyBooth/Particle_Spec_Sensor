@@ -1,0 +1,358 @@
+
+/*
+ * Project EthanolFirmware_v101
+ * Description:
+ * Author:
+ * Date:
+ */
+
+#include <math.h>
+// This #include statement was automatically added by the Particle IDE.
+#include <SerialBufferRK.h>
+// SerialBuffer<4096> serBuf(Serial1);
+
+// PIN DEFINITIONS
+const int ledPin = D8;
+
+//GLOBAL VARIABLES
+
+String sensorSerialNum;
+char value[30];
+char value1[30];
+char value2[30];
+char value3[30];
+int specO3;
+int specTemp;
+int specRH;
+int specRawSensor;
+int specTempDig;
+int specRHDig;
+int specDays;
+int specHours;
+int specMin;
+int specSec;
+
+int myMonth;
+int myDay;
+int myYear;
+
+int lastTenSpecO3[]={0,0,0};
+int sumLastTenSpecO3=0;
+int measureCount=0;
+float runAveSpecO3=0;
+int irunAveSpecO3;
+
+
+//  #define command_delay 500;
+//  #define start_delay 2500;
+String dataString = "";
+String responseString = "";
+int dataStringComplete;
+//  String help;
+char inChar;
+String tempString;
+//  char ssid[18];
+//  char password[18];
+//  long timezone =1;
+//  byte daysavetime=1;
+
+//SETUP MENU VARIABLES
+
+char inSerial = '0';//Is there a request to go the setup menu
+char inSpan = '0';
+bool inMenu=false;
+ 
+//pm2.5 vars
+unsigned long duration;
+float startTime;
+float sampleTime = 30000;// 30 sec sample rate
+float lpo = 0; //low pulse occupancy - raw signal from sensor 
+float ratio = 0;
+float concentration = 0;
+int pinPPD = D6;
+
+// setup() runs once, when the device is first turned on.
+void setup() {
+    // SYSTEM_THREAD(ENABLED);
+    System.enableReset();
+    //setup USB port for debug messages
+    Serial.begin();
+    debug("check setup = 1");
+  //Give everything 5s to warm up
+    delay(8000);
+  // initialize digital pin ledPin as an output.
+    pinMode(ledPin, OUTPUT);
+    //SETUP the serial port for the SPEC sensor
+    Serial1.begin(9600,SERIAL_8N1);
+    // Serial1.begin(230400);
+    debug("check setup = 2");
+  dataString.reserve(1500);
+  responseString.reserve(150);
+
+  //Setup the SPEC SENSOR
+  SPEC_reset();
+    debug("check reset etoh = 2");
+
+    // pn2.5 Set UP
+    pinMode(pinPPD,INPUT);
+    startTime=millis(); // current time
+    debug(String(int(startTime)));
+    // serBuf.setup();
+}//end Setup
+    
+    
+// loop() runs over and over again, as quickly as it can execute.
+void loop() {
+
+    // while (!Serial1.available());
+    // while (serBuf.available()){
+    
+    while (Serial1.available()){
+        
+        digitalWrite(ledPin, HIGH);
+        SPEC_Data_read();
+        debug("check read = 2");
+        if (dataStringComplete==1){// verify data read completed;  avoid bug that locks on print data function
+            debug("check parse= 1");
+            SPEC_parse_data();
+            SPEC_print_data();
+            debug("check print= 2");
+        }
+        else{
+            debug("skipped parse print; reset");//if data read fails reset particle;  reset spec not sufficient
+            delay(200);
+            // SPEC_reset();
+            System.reset();
+        }
+    }//END OF While serial1 available
+
+     //Check if there is a serial request to go to config menu !!!TBD
+    while (Serial.available()){
+        inSerial=Serial.read();
+        if (inSerial=='1'){
+            Serial.println("entering config menu");
+            // SPEC_configMenu();
+        }else{
+            inSerial='0';//if invalid entry, return to zero
+        }
+    }//end while check for config
+    
+    duration = pulseIn(pinPPD,LOW);
+    // duration = digitalRead(pin,LOW);
+    debug("duration=");
+    debug(String(int(duration)));
+    lpo = lpo + duration;
+    if(millis()-startTime > sampleTime){
+        processPM25();
+    }
+    
+}// End Main loop
+  
+  // The core of your code will likely live here.
+
+void debug(String message) {//print debug messages to USB terminal
+    Serial.println(message);
+}    
+    
+void SPEC_reset() {
+    // Serial1.print("r");
+    // delay(8000);
+    
+    Serial1.print("c");
+    delay(2000);
+}
+
+void SPEC_Data_read(){
+    dataStringComplete=0;
+    dataString="";
+    // while(!Serial1.available());
+    // while(serBuf.available()){//wait for data to come back
+    while(Serial1.available()){//wait for data to come back
+        // dataString=serBuf.read();
+        dataString=Serial1.readStringUntil('\n');
+        // delay(5);
+        // dataString=Serial1.read();
+        // dataString=serBuf.readStringUntil('\n');
+        if (dataString.length() > 20){//check full string is read; bug can cause only 10 chars to read in which will cause data print to lock up
+            dataStringComplete=1;
+        }
+        else{
+            debug("data short fail");
+            dataStringComplete=0;
+        }
+    }
+    debug("datastring =");
+    debug(dataString);
+    debug("data read complete?");
+    debug(String(dataStringComplete));
+}//End Spec Read Data
+
+void SPEC_parse_data(){
+    int idx1=dataString.indexOf(',');
+    sensorSerialNum= dataString.substring(0,idx1);
+    
+    int idx2=dataString.indexOf(',',idx1 +1);
+    String S_O3=dataString.substring(idx1+2,idx2);
+    specO3=S_O3.toInt();
+    
+    int idx3 = dataString.indexOf(',',idx2+1);
+    String S_temp=dataString.substring(idx2+2,idx3);
+    specTemp=S_temp.toInt();
+    
+    int idx4 = dataString.indexOf(',',idx3+1);
+    String S_humid=dataString.substring(idx3+2,idx4);
+    specRH=S_humid.toInt();
+    
+    int idx5=dataString.indexOf(',',idx4+1);
+    String S_rawGas=dataString.substring(idx4+2,idx5);
+    specRawSensor=S_rawGas.toInt();
+    
+    int idx6=dataString.indexOf(',',idx5+1);
+    String S_tDig=dataString.substring(idx5+2,idx6);
+    specTempDig=S_tDig.toInt();
+    
+    int idx7= dataString.indexOf(',', idx6+1);
+    String S_rhDig=dataString.substring(idx6+2,idx7);
+    specRHDig=S_rhDig.toInt();
+    
+    int idx8=dataString.indexOf(',',idx7+1);
+    String S_Days=dataString.substring(idx7+2,idx8);
+    specDays=S_Days.toInt();
+    
+    int idx9=dataString.indexOf(',',idx8+1);
+    String S_Hrs=dataString.substring(idx8+2, idx9);
+    specHours=S_Hrs.toInt();
+    
+    int idx10=dataString.indexOf(',', idx9+1);
+    String S_Min=dataString.substring(idx9+2,idx10);
+    specMin=S_Min.toInt();
+    
+    int idx11= dataString.indexOf('\r');
+    String S_Sec=dataString.substring(idx10+2,idx11);
+    specSec=S_Sec.toInt();
+    
+    //Keep a running average of the last 10 O3ppm measures; change to 3
+    
+    sumLastTenSpecO3 -= lastTenSpecO3[measureCount];  //take away what is currently in the measureCountspace
+    lastTenSpecO3[measureCount]=specO3;// replace with new
+    sumLastTenSpecO3 += lastTenSpecO3[measureCount];  
+    runAveSpecO3 = (float)sumLastTenSpecO3/3.0;
+    irunAveSpecO3 = (int)runAveSpecO3;
+    measureCount++;
+    if(measureCount>2) {
+        measureCount=0;
+    }
+}//End Spec Parse Data
+
+void SPEC_print_data(){
+    debug("specO3= ");
+    debug(String(specO3));
+    sprintf(value,"%d",specO3);  
+    Particle.publish("EtOH",value,PRIVATE);
+    // sprintf(value1,"%d",irunAveSpecO3);  
+    // Particle.publish("EtOHavg3",value1,PRIVATE);
+//   sprintf(value2,"%d",specTemp);  
+//   Particle.publish("Temp",value2,PRIVATE);
+//   sprintf(value3,"%d",specRH);  
+//   Particle.publish("RH",value3,PRIVATE);
+    debug("print end");
+  
+
+}//END OF SPEC_print_data()
+
+
+void SPEC_configMenu(){
+  
+    inSerial='0';
+    dataString="";
+    
+    Serial.println();
+    Serial.println("----------SETUP MENU-------------");
+    Serial.println("2=set current sensor reading to 0");
+    Serial.println("3=set Span: TBD");
+    Serial.println("4=Set up data averaging (seconds to avg)");
+    Serial.println("9=EXIT");
+    Serial.println();
+
+    while(Serial.available()){
+        while(inSerial!='9'){
+            inSerial=Serial.read();
+            if(inSerial=='2'){
+                Serial1.print("Z");
+                delay(500);
+                while(!Serial1.available());//wait for confirmation
+                dataString=Serial1.readString();
+                Serial.println(dataString);  
+            }
+            
+            // if(inSerial=='3'){
+            // hwSerial.print("S");
+            
+            //  while(!hwSerial.available());//wait for confirmation
+            //  dataString=hwSerial.readString();
+            //  Serial.println(dataString);
+            //  Serial.println("press enter after value");
+            //  if (Serial.available()){
+            //  inSpan=Serial.read();
+            //  }
+            //  hwSerial.print(inSpan);
+            //  while(!hwSerial.available());//wait for confirmation
+            //  dataString=hwSerial.readString();
+            //  Serial.println(dataString); 
+            // }
+            
+            if(inSerial=='4'){
+                Serial.println("Enter Seconds 1-300");
+                while(!Serial.available());//wait for available
+                    if (Serial.available()){
+                        tempString=Serial.readString();
+                    }
+                Serial1.println("A");
+                delay(500);
+                Serial1.println(tempString);
+                delay(500);
+                Serial.println("Avg Seconds=");
+                Serial.println(tempString);
+                Serial.println("---------");
+            
+            // Serial.println("enter password");
+            // while(!Serial.available());//wait for password entry
+            //   if (Serial.available()){
+            //     String tempString=Serial.readString();
+            //     int str_len=tempString.length()+1;
+            //     tempString.toCharArray(password,str_len);
+            //   }
+            // Serial.println(password);
+            
+            // StartWifi(ssid,password);
+            // Serial.println("returned from StartWiFi");
+            // inSerial='9';
+                
+                
+            }//END OF MENU ITEM 4
+             
+        }//end while not exit
+        
+    }//end while serial available
+  
+    return;
+}//END OF SPEC CONFIG
+
+// pm25 functions
+void processPM25 (){
+    ratio = lpo/(sampleTime*10.0);  // Integer percentage 0=>100
+    concentration = 1.1*pow(ratio,3)-3.8*pow(ratio,2)+520*ratio+0.62; // using spec sheet curve
+    // Serial.print(lowpulseoccupancy);
+    // Serial.print(",");
+    // Serial.print(ratio);
+    // Serial.print(",");
+    // Serial.println(concentration);
+    debug("lpo");
+    debug(String(int(lpo)));
+    debug("ratio");
+    debug(String(int(ratio)));
+    debug("conc");
+    debug(String(int(concentration)));
+    lpo = 0;
+    startTime = millis();
+}
