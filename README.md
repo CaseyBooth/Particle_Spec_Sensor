@@ -6,3 +6,7 @@ Link to video on integration of particle to gCloud
 
 link to gCloud tutorial 
  https://docs.particle.io/tutorials/integrations/google-cloud-platform/
+
+link to particle sensor project tutorial connecting sensors to breadboard
+https://www.jaredwolff.com/homemade-indoor-air-quality-sensor/#!
+
